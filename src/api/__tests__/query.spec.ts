@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { buildCandidaturesQuery, buildSkillsPattern } from '../query'
 import { createEmptyFilters } from '@/types/filters'
 
@@ -31,15 +31,11 @@ describe('buildSkillsPattern', () => {
 })
 
 describe('buildCandidaturesQuery', () => {
+  afterEach(() => vi.unstubAllEnvs())
+
   it('maps filters, sort and pagination to JSON Server params', () => {
     const query = buildCandidaturesQuery({
-      filters: {
-        ...createEmptyFilters(),
-        q: '  Paris ',
-        statuts: ['En attente', 'Refusé'],
-        dateFrom: '2024-01-10',
-        dateTo: '2024-01-20',
-      },
+      filters: { ...createEmptyFilters(), q: '  Paris ', statuts: ['En attente', 'Refusé'] },
       sort: 'date-desc',
       page: 2,
       limit: 10,
@@ -48,13 +44,59 @@ describe('buildCandidaturesQuery', () => {
     expect(query).toMatchObject({
       q: 'Paris',
       statut: ['En attente', 'Refusé'],
-      dateCandidature_gte: '2024-01-10',
-      // Inclusive upper bound: ISO timestamps of that day compare greater than "2024-01-20".
-      dateCandidature_lte: '2024-01-20T23:59:59.999Z',
       _sort: 'dateCandidature',
       _order: 'desc',
       _page: 2,
       _limit: 10,
+    })
+    expect(query.dateCandidature_gte).toBeUndefined()
+    expect(query.dateCandidature_lte).toBeUndefined()
+  })
+
+  describe('date range', () => {
+    // JSON Server compares the stored value and the bound as strings.
+    const inRange = (stored: string, query: ReturnType<typeof buildCandidaturesQuery>) =>
+      stored >= String(query.dateCandidature_gte) && stored <= String(query.dateCandidature_lte)
+
+    const queryFor = (dateFrom: string, dateTo: string) =>
+      buildCandidaturesQuery({
+        filters: { ...createEmptyFilters(), dateFrom, dateTo },
+        sort: 'date-desc',
+      })
+
+    it('uses the local day, converted to UTC', () => {
+      vi.stubEnv('TZ', 'Europe/Paris') // UTC+1 in January
+      const query = queryFor('2024-01-16', '2024-01-16')
+
+      expect(query.dateCandidature_gte).toBe('2024-01-15T23:00:00')
+      expect(query.dateCandidature_lte).toBe('2024-01-16T22:59:59Z')
+      // 23:30 UTC on the 15th is 00:30 on the 16th in Paris: displayed as the 16th, so included.
+      expect(inRange('2024-01-15T23:30:00Z', query)).toBe(true)
+      expect(inRange('2024-01-15T22:59:59Z', query)).toBe(false)
+      expect(inRange('2024-01-16T23:00:00Z', query)).toBe(false)
+    })
+
+    it('includes the first and last instants of the day, with or without milliseconds', () => {
+      vi.stubEnv('TZ', 'UTC')
+      const query = queryFor('2024-01-10', '2024-01-20')
+
+      for (const stored of [
+        '2024-01-10T00:00:00Z',
+        '2024-01-10T00:00:00.000Z',
+        '2024-01-20T23:59:59Z',
+        '2024-01-20T23:59:59.999Z',
+      ]) {
+        expect(inRange(stored, query)).toBe(true)
+      }
+      expect(inRange('2024-01-09T23:59:59.999Z', query)).toBe(false)
+      expect(inRange('2024-01-21T00:00:00Z', query)).toBe(false)
+    })
+
+    it('ignores an invalid date', () => {
+      const query = queryFor('not-a-date', '')
+
+      expect(query.dateCandidature_gte).toBeUndefined()
+      expect(query.dateCandidature_lte).toBeUndefined()
     })
   })
 })

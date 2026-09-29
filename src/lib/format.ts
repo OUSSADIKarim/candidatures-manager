@@ -16,8 +16,16 @@ const currencyFormatter = new Intl.NumberFormat('fr-FR', {
   maximumFractionDigits: 0,
 })
 
-export const formatDate = (iso: string) => dateFormatter.format(new Date(iso))
-export const formatDateTime = (iso: string) => dateTimeFormatter.format(new Date(iso))
+const MISSING = '—'
+
+/** Intl formatters throw on an invalid date: one bad record must not break a whole view. */
+function formatWith(formatter: Intl.DateTimeFormat, iso: string | null | undefined): string {
+  const date = new Date(iso ?? '')
+  return Number.isNaN(date.getTime()) ? MISSING : formatter.format(date)
+}
+
+export const formatDate = (iso: string | null | undefined) => formatWith(dateFormatter, iso)
+export const formatDateTime = (iso: string | null | undefined) => formatWith(dateTimeFormatter, iso)
 export const formatCurrency = (amount: number) => currencyFormatter.format(amount)
 
 export function initials(fullName: string): string {

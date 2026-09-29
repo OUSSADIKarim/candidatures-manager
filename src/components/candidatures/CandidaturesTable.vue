@@ -104,7 +104,7 @@ const route = useRoute()
           </TableCell>
           <TableCell>
             <ChevronRight
-              class="text-muted-foreground size-4 transition-transform group-hover:translate-x-0.5"
+              class="text-muted-foreground pointer-events-none size-4 transition-transform group-hover:translate-x-0.5"
               aria-hidden="true"
             />
           </TableCell>

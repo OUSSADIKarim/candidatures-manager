@@ -26,6 +26,21 @@ export function buildSkillsPattern(skills: string[], mode: 'all' | 'any'): strin
   return `^${escaped.map((skill) => `(?=.*(^|,)${skill}(,|$))`).join('')}`
 }
 
+/**
+ * The recruiter picks local calendar days while stored dates are UTC instants: the bounds are
+ * the local start and end of day, converted to UTC. JSON Server compares them as strings, and
+ * stored dates come with or without milliseconds ("…:00Z", "…:00.123Z"), hence the formats:
+ * the lower bound has no suffix (sorts before any instant of that second), the upper one ends
+ * with "Z" (sorts after any millisecond of that second).
+ */
+function localDayBound(day: string | null, edge: 'start' | 'end'): string | undefined {
+  if (!day) return undefined
+  const date = new Date(`${day}T${edge === 'start' ? '00:00:00' : '23:59:59'}`)
+  if (Number.isNaN(date.getTime())) return undefined
+  const instant = date.toISOString().slice(0, 19)
+  return edge === 'start' ? instant : `${instant}Z`
+}
+
 export interface ListParams {
   filters: CandidatureFilters
   sort: SortOption
@@ -39,9 +54,8 @@ export function buildCandidaturesQuery({ filters, sort, page, limit }: ListParam
     statut: filters.statuts,
     poste: filters.postes,
     competences_like: buildSkillsPattern(filters.competences, filters.competencesMode),
-    // Dates are ISO strings compared lexicographically: widen the upper bound to the end of the day.
-    dateCandidature_gte: filters.dateFrom ?? undefined,
-    dateCandidature_lte: filters.dateTo ? `${filters.dateTo}T23:59:59.999Z` : undefined,
+    dateCandidature_gte: localDayBound(filters.dateFrom, 'start'),
+    dateCandidature_lte: localDayBound(filters.dateTo, 'end'),
     ...SORTS[sort],
     _page: page,
     _limit: limit,

@@ -26,6 +26,9 @@ importers:
       clsx:
         specifier: ^2.1.1
         version: 2.1.1
+      json-server:
+        specifier: 0.17.4
+        version: 0.17.4(supports-color@10.2.2)
       pinia:
         specifier: ^4.0.3
         version: 4.0.3(@vue/devtools-api@8.2.1)(typescript@6.0.3)(vue@3.5.43(typescript@6.0.3))
@@ -102,9 +105,6 @@ importers:
       jsdom:
         specifier: ^30.0.1
         version: 30.1.1
-      json-server:
-        specifier: 0.17.4
-        version: 0.17.4(supports-color@10.2.2)
       npm-run-all2:
         specifier: ^9.0.3
         version: 9.0.3
@@ -3303,7 +3303,6 @@ packages:
     engines: {node: '>=v14.21.3'}
     peerDependencies:
       vite: ^6.0.0 || ^7.0.0 || ^8.0.0
-      vue: '*'
 
   vite-plugin-vue-inspector@6.0.0:
     resolution: {integrity: sha512-OpyITJLgZNibxlrik1EmRtvXHDjLRxNPsWkGFTERZs2LgMEdG4W0WoFt5GIgp3a3jRou+eJR8U1zOBk/XQgEbw==}
@@ -6791,10 +6790,10 @@ snapshots:
       vite: 8.3.1(@types/node@26.6.3)(jiti@2.7.0)(stylus@0.57.0(supports-color@10.2.2))
       vite-plugin-inspect: 11.4.1(vite@8.3.1(@types/node@26.6.3)(jiti@2.7.0)(stylus@0.57.0(supports-color@10.2.2)))
       vite-plugin-vue-inspector: 6.0.0(supports-color@10.2.2)(vite@8.3.1(@types/node@26.6.3)(jiti@2.7.0)(stylus@0.57.0(supports-color@10.2.2)))
-      vue: 3.5.43(typescript@6.0.3)
     transitivePeerDependencies:
       - '@nuxt/kit'
       - supports-color
+      - vue
 
   vite-plugin-vue-inspector@6.0.0(supports-color@10.2.2)(vite@8.3.1(@types/node@26.6.3)(jiti@2.7.0)(stylus@0.57.0(supports-color@10.2.2))):
     dependencies:

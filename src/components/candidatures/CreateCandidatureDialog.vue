@@ -28,6 +28,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useCandidatureActions } from '@/composables/useCandidatureActions'
 import { describeError } from '@/lib/errors'
+import { safeHttpUrl } from '@/lib/url'
 import { useReferentielsStore } from '@/stores/referentiels'
 
 const referentiels = useReferentielsStore()
@@ -75,7 +76,7 @@ const errors = computed(() => {
   if (form.salaireSouhaite !== '' && (!Number.isFinite(salary) || salary < 0)) {
     result.salaireSouhaite = 'Montant invalide.'
   }
-  if (form.cv.trim() && !URL.canParse(form.cv.trim())) result.cv = 'URL invalide (https://…).'
+  if (form.cv.trim() && !safeHttpUrl(form.cv)) result.cv = 'Lien invalide (https://…).'
   return result
 })
 
@@ -117,7 +118,7 @@ async function submit() {
       experience: form.experience.trim(),
       disponibilite: form.disponibilite.trim(),
       salaireSouhaite: Number(form.salaireSouhaite) || 0,
-      cv: form.cv.trim(),
+      cv: safeHttpUrl(form.cv) ?? '',
       lettreMotivation: form.lettreMotivation.trim(),
       dateCandidature: new Date().toISOString(),
       commentaires: [],

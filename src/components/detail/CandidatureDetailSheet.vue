@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import ErrorState from '@/components/common/ErrorState.vue'
 import { ApiError } from '@/api/http'
@@ -14,6 +14,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { useCandidatureActions } from '@/composables/useCandidatureActions'
 import { useCandidaturesStore } from '@/stores/candidatures'
+import type { Candidature } from '@/types/models'
 import CandidatureDetail from './CandidatureDetail.vue'
 
 // Route-driven panel (/candidatures/:id), so a candidature can be shared by URL.
@@ -25,25 +26,54 @@ const route = useRoute()
 const router = useRouter()
 
 const open = ref(true)
-const candidature = computed(() => store.getById(props.id))
+let closeTimer: ReturnType<typeof setTimeout> | undefined
+
+// While the panel slides out after a deletion, keep showing the candidature it displayed
+// instead of falling back to the loading skeleton.
+const lastShown = shallowRef<Candidature>()
+const candidature = computed(
+  () => store.getById(props.id) ?? (open.value ? undefined : lastShown.value),
+)
+watch(
+  () => store.getById(props.id),
+  (current) => {
+    if (current) lastShown.value = current
+  },
+  { immediate: true },
+)
 const state = computed(() => store.details[props.id])
 const isNotFound = computed(
   () => state.value?.error instanceof ApiError && state.value.error.kind === 'not_found',
 )
 
 // Cached data (from the list or board) is shown immediately while fresh data loads.
+// Another candidature opened while this panel was closing: cancel the close and show it.
 watch(
   () => props.id,
-  (id) => store.fetchOne(id),
+  (id) => {
+    clearTimeout(closeTimer)
+    open.value = true
+    store.fetchOne(id)
+  },
   { immediate: true },
 )
 
 const CLOSE_ANIMATION_MS = 200
 
+// The route changes once the panel has slid out. If the recruiter navigated elsewhere in the
+// meantime (another candidature, a toast link), that navigation wins.
 function close() {
+  const closingId = props.id
   open.value = false
-  setTimeout(() => router.push({ name: 'candidatures', query: route.query }), CLOSE_ANIMATION_MS)
+  clearTimeout(closeTimer)
+  closeTimer = setTimeout(() => {
+    const stillHere =
+      route.name === 'candidature-detail' && Number(route.params.id) === closingId && !open.value
+    if (stillHere) router.push({ name: 'candidatures', query: route.query })
+  }, CLOSE_ANIMATION_MS)
 }
+
+onBeforeUnmount(() => clearTimeout(closeTimer))
 
 // Optimistic: the panel closes right away, the candidature is restored if the DELETE fails.
 function deleteCandidature() {

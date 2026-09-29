@@ -32,6 +32,7 @@ import { Separator } from '@/components/ui/separator'
 import { SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { formatCurrency, formatDate } from '@/lib/format'
+import { safeHttpUrl } from '@/lib/url'
 import { cn } from '@/lib/utils'
 import { usePreferencesStore } from '@/stores/preferences'
 import { useReferentielsStore } from '@/stores/referentiels'
@@ -59,6 +60,10 @@ const emit = defineEmits<{
 const preferences = usePreferencesStore()
 const referentiels = useReferentielsStore()
 const statusId = useId()
+
+// Links come from the API, i.e. from anyone who can write to it: never trust their scheme.
+const cvUrl = computed(() => safeHttpUrl(props.candidature.cv))
+const phoneHref = computed(() => `tel:${props.candidature.telephone.replace(/[^\d+]/g, '')}`)
 
 const facts = computed(() => [
   { icon: Briefcase, label: 'Expérience', value: props.candidature.experience },
@@ -123,8 +128,8 @@ const matchedCount = computed(() => requiredSkills.value.filter((s) => s.matched
         />
       </div>
       <div class="flex gap-2 sm:ml-auto">
-        <Button v-if="candidature.cv" variant="outline" as-child class="flex-1 sm:flex-none">
-          <a :href="candidature.cv" target="_blank" rel="noopener noreferrer">
+        <Button v-if="cvUrl" variant="outline" as-child class="flex-1 sm:flex-none">
+          <a :href="cvUrl" target="_blank" rel="noopener noreferrer">
             <ExternalLink />
             Voir le CV
             <span class="sr-only">(nouvel onglet)</span>
@@ -174,6 +179,7 @@ const matchedCount = computed(() => requiredSkills.value.filter((s) => s.matched
       <section aria-labelledby="contact-heading" class="grid gap-2">
         <h3 id="contact-heading" class="text-sm font-semibold">Contact</h3>
         <a
+          v-if="candidature.email"
           :href="`mailto:${candidature.email}`"
           class="hover:text-foreground text-muted-foreground flex items-center gap-2 text-sm underline-offset-4 hover:underline"
         >
@@ -181,12 +187,19 @@ const matchedCount = computed(() => requiredSkills.value.filter((s) => s.matched
           {{ candidature.email }}
         </a>
         <a
-          :href="`tel:${candidature.telephone.replace(/\s/g, '')}`"
+          v-if="candidature.telephone"
+          :href="phoneHref"
           class="hover:text-foreground text-muted-foreground flex items-center gap-2 text-sm underline-offset-4 hover:underline"
         >
           <Phone class="size-4" aria-hidden="true" />
           {{ candidature.telephone }}
         </a>
+        <p
+          v-if="!candidature.email && !candidature.telephone"
+          class="text-muted-foreground text-sm"
+        >
+          Aucune coordonnée renseignée.
+        </p>
       </section>
 
       <Separator />

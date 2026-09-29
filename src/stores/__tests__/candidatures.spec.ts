@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { candidaturesApi } from '@/api/candidatures'
 import { ApiError } from '@/api/http'
 import type { Candidature } from '@/types/models'
 import { useCandidaturesStore } from '../candidatures'
+import { usePreferencesStore } from '../preferences'
 
 // Automock: every candidaturesApi method becomes a typed mock, no request is sent.
 vi.mock('@/api/candidatures')
@@ -162,6 +164,92 @@ describe('updateStatus', () => {
     patch.resolve(candidature({ statut: 'Entretien RH' }))
     await result
     expect(store.getById(1)?.statut).toBe('Entretien RH')
+  })
+})
+
+describe('reads racing with a status change', () => {
+  it('keeps a moved card on the board when its columns reload before the save', async () => {
+    const server = [candidature()]
+    const store = await setup(server)
+    const patch = deferred<Candidature>()
+    api.patch.mockReturnValue(patch.promise)
+
+    const result = store.updateStatus(1, 'Entretien RH')
+    // Reload while saving (filter change, refresh…): the server still has "En attente".
+    await store.fetchBoard(['En attente', 'Entretien RH'])
+
+    expect(store.columnItems('Entretien RH').map((c) => c.id)).toEqual([1])
+    expect(store.column('Entretien RH').total).toBe(1)
+    expect(store.columnItems('En attente')).toEqual([])
+    expect(store.column('En attente').total).toBe(0)
+
+    server[0]!.statut = 'Entretien RH'
+    patch.resolve(candidature({ statut: 'Entretien RH' }))
+    await result
+    await vi.waitFor(() => expect(store.column('Entretien RH').status).toBe('success'))
+
+    expect(store.columnItems('Entretien RH').map((c) => c.id)).toEqual([1])
+    expect(store.column('Entretien RH').total).toBe(1)
+    expect(store.column('En attente').total).toBe(0)
+  })
+
+  it('reloads the adjusted columns once the change is settled', async () => {
+    const store = await setup()
+    const patch = deferred<Candidature>()
+    api.patch.mockReturnValue(patch.promise)
+
+    const result = store.updateStatus(1, 'Entretien RH')
+    await store.fetchBoard(['En attente', 'Entretien RH'])
+    api.list.mockClear()
+    patch.resolve(candidature({ statut: 'Entretien RH' }))
+    await result
+
+    const reloaded = api.list.mock.calls.map(([params]) => params.filters.statuts[0])
+    expect(reloaded.sort()).toEqual(['En attente', 'Entretien RH'])
+  })
+
+  it('ignores a detail response older than the saved status', async () => {
+    const store = await setup()
+    const get = deferred<Candidature>()
+    api.get.mockReturnValue(get.promise)
+    api.patch.mockResolvedValue(candidature({ statut: 'Accepté' }))
+
+    const detail = store.fetchOne(1) // sent first, answered last
+    await store.updateStatus(1, 'Accepté')
+    get.resolve(candidature({ statut: 'En attente' }))
+    await detail
+
+    expect(store.getById(1)?.statut).toBe('Accepté')
+    expect(store.columnItems('Accepté').map((c) => c.id)).toEqual([1])
+    expect(store.detail(1).status).toBe('success')
+  })
+
+  it('applies a detail response sent after the save', async () => {
+    const store = await setup()
+    api.patch.mockResolvedValue(candidature({ statut: 'Accepté' }))
+    await store.updateStatus(1, 'Accepté')
+    api.get.mockResolvedValue(candidature({ statut: 'Accepté', experience: '4 ans' }))
+
+    await store.fetchOne(1)
+
+    expect(store.getById(1)?.experience).toBe('4 ans')
+  })
+})
+
+describe('pagination', () => {
+  it('goes back to page 1 when criteria change, even if the list is not displayed', async () => {
+    const store = await setup()
+    const preferences = usePreferencesStore()
+    store.list.page = 3
+
+    preferences.sort = 'nom-asc'
+    await nextTick()
+    expect(store.list.page).toBe(1)
+
+    store.list.page = 3
+    preferences.filters.statuts = ['Accepté']
+    await nextTick()
+    expect(store.list.page).toBe(1)
   })
 })
 

@@ -1,6 +1,6 @@
 // Candidatures are stored once, normalized by id. The list page, board columns and detail
 // view only hold ids, so an update to an entity is reflected everywhere at once.
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { candidaturesApi, type NewCandidature } from '@/api/candidatures'
 import { ApiError, isAbortError } from '@/api/http'
@@ -81,6 +81,14 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
   const confirmed = new Map<number, Candidature>()
   const statusSync = new Map<number, StatusSync>()
   const commentQueues = new Map<number, Promise<MutationResult>>()
+  /** Columns whose content was adjusted locally: reloaded once status changes are settled. */
+  const dirtyColumns = new Set<string>()
+
+  // Logical clock ordering reads and writes: a read that started before a write to the same
+  // candidature carries data older than that write, whenever its response arrives.
+  let clock = 0
+  const lastWrite = new Map<number, number>()
+  const markWrite = (id: number) => lastWrite.set(id, ++clock)
 
   // Nested items get no server id. A timestamp avoids collisions between recruiters; the
   // increment keeps ids unique when several are created within the same millisecond.
@@ -100,16 +108,23 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
     return controller.signal
   }
 
-  /** Server data wins, except a status change still in flight, which stays optimistic. */
-  function applyServer(item: Candidature) {
-    confirmed.set(item.id, structuredClone(item))
+  /**
+   * Server data wins, with two exceptions: a status change still in flight stays optimistic,
+   * and a read started before our last write to that candidature is outdated, so it is ignored.
+   * `readStartedAt` is the clock value when the read was sent; omitted for write responses.
+   */
+  function applyServer(item: Candidature, readStartedAt?: number) {
     const current = entities.value[item.id]
+    const isOutdated = readStartedAt !== undefined && (lastWrite.get(item.id) ?? 0) > readStartedAt
+    if (current && isOutdated) return
+
+    confirmed.set(item.id, structuredClone(item))
     entities.value[item.id] =
       pendingStatusIds.has(item.id) && current ? { ...item, statut: current.statut } : item
   }
 
-  function upsert(items: Candidature[]) {
-    items.forEach(applyServer)
+  function upsert(items: Candidature[], readStartedAt: number) {
+    for (const item of items) applyServer(item, readStartedAt)
   }
 
   function resolve(ids: number[]): Candidature[] {
@@ -123,6 +138,7 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
 
   async function fetchList(): Promise<void> {
     const signal = nextSignal('list')
+    const startedAt = clock
     list.status = 'loading'
     list.error = null
     try {
@@ -140,7 +156,7 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
         list.page = Math.ceil(total / preferences.pageSize)
         return fetchList()
       }
-      upsert(items)
+      upsert(items, startedAt)
       list.ids = items.map((item) => item.id)
       list.total = total
       list.status = 'success'
@@ -155,6 +171,16 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
     list.page = page
     return fetchList()
   }
+
+  // New criteria mean new results: back to page 1. Done here rather than in the list view,
+  // because criteria can also change while the board is displayed.
+  watch(
+    () => [preferences.filters, preferences.sort, preferences.pageSize],
+    () => {
+      list.page = 1
+    },
+    { deep: true },
+  )
 
   // --- Board (one request per status column) --------------------------------------------------
 
@@ -172,6 +198,7 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
     const state = column(statut)
     if (more) state.limit += BOARD_PAGE_SIZE
     const signal = nextSignal(`column:${statut}`)
+    const startedAt = clock
     state.status = 'loading'
     state.error = null
     try {
@@ -184,9 +211,20 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
         },
         signal,
       )
-      upsert(items)
-      state.ids = items.map((item) => item.id)
-      state.total = total
+      upsert(items, startedAt)
+      const serverIds = items.map((item) => item.id)
+      // Status changes still being saved are not in this response yet: keep the cards where
+      // the recruiter put them, and reload the column once the changes are settled.
+      const isMoving = (id: number) => pendingStatusIds.has(id)
+      const movedAway = serverIds.filter(
+        (id) => isMoving(id) && entities.value[id]?.statut !== statut,
+      )
+      const movedHere = state.ids.filter(
+        (id) => isMoving(id) && entities.value[id]?.statut === statut && !serverIds.includes(id),
+      )
+      state.ids = [...serverIds.filter((id) => !movedAway.includes(id)), ...movedHere]
+      state.total = total - movedAway.length + movedHere.length
+      if (movedAway.length > 0 || movedHere.length > 0) dirtyColumns.add(statut)
       state.status = 'success'
     } catch (error) {
       if (isAbortError(error)) return
@@ -199,7 +237,11 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
     return Promise.all(statuts.map((statut) => fetchColumn(statut)))
   }
 
-  /** Moves a card between loaded columns, keeping the current sort order and the counts. */
+  /**
+   * Moves a card between loaded columns, keeping the current sort order and the counts.
+   * In a partially loaded column, a card that sorts after every loaded one is shown at the end
+   * (the recruiter must see where the card went); its real position comes with the reload.
+   */
   function moveBetweenColumns(id: number, from: string, to: string) {
     const source = columns[from]
     const index = source?.ids.indexOf(id) ?? -1
@@ -214,8 +256,15 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
       const other = entities.value[otherId]
       return other !== undefined && compareBy(preferences.sort, item, other) < 0
     })
+    if (position === -1 && target.ids.length < target.total) dirtyColumns.add(to)
     target.ids.splice(position === -1 ? target.ids.length : position, 0, id)
     target.total += 1
+  }
+
+  function reloadDirtyColumns() {
+    const statuts = [...dirtyColumns]
+    dirtyColumns.clear()
+    for (const statut of statuts) fetchColumn(statut)
   }
 
   // --- Detail ---------------------------------------------------------------------------------
@@ -232,10 +281,11 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
   async function fetchOne(id: number): Promise<void> {
     const state = detail(id)
     const signal = nextSignal(`detail:${id}`)
+    const startedAt = clock
     state.status = 'loading'
     state.error = null
     try {
-      upsert([await candidaturesApi.get(id, signal)])
+      applyServer(await candidaturesApi.get(id, signal), startedAt)
       state.status = 'success'
     } catch (error) {
       if (isAbortError(error)) return
@@ -264,6 +314,7 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
       moveBetweenColumns(id, entity.statut, truth.statut)
       entity.statut = truth.statut
     }
+    if (pendingStatusIds.size === 0) reloadDirtyColumns()
   }
 
   /**
@@ -287,7 +338,9 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
       const isLatest = () => version === sync.version
       if (!isLatest()) return { status: 'superseded' } // a newer change is queued behind
       try {
+        markWrite(id)
         const saved = await candidaturesApi.patch(id, { statut })
+        markWrite(id)
         confirmed.set(id, structuredClone(saved))
         return isLatest() ? { status: 'saved' } : { status: 'superseded' }
       } catch (error) {
@@ -346,9 +399,11 @@ export const useCandidaturesStore = defineStore('candidatures', () => {
       }
       try {
         const latest = await candidaturesApi.get(id)
+        markWrite(id)
         const saved = await candidaturesApi.patch(id, {
           commentaires: [...latest.commentaires.filter((c) => c.id !== commentId), plain],
         })
+        markWrite(id)
         removePendingComment(id, commentId)
         applyServer(saved)
         return { status: 'saved' }
