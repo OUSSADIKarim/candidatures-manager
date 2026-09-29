@@ -16,7 +16,7 @@ Aucune donnée n'est hardcodée : statuts, postes, compétences et candidatures 
 
 ## Démo en ligne
 
-> 🔗 **URL à compléter après le déploiement**
+> 🔗 **https://candidatures-manager.onrender.com**
 
 L'application et l'API sont hébergées ensemble sur [Render](https://render.com) (offre
 gratuite), par un seul service Node (`server.js`) :
