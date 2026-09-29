@@ -1,3 +1,5 @@
+import '@fontsource-variable/geist'
+import 'vue-sonner/style.css'
 import './assets/main.css'
 
 import { createApp } from 'vue'

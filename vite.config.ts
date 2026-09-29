@@ -12,6 +12,13 @@ export default defineConfig({
     tailwindcss(),
     vueDevTools(),
   ],
+  server: {
+    watch: {
+      // JSON Server rewrites db.json on every POST/PATCH/DELETE. It is not part of the app:
+      // without this, each write makes the dev server reload the page.
+      ignored: ['**/db.json', '**/db.backup.json'],
+    },
+  },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
